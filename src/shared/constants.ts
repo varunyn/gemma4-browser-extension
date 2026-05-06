@@ -12,42 +12,11 @@ export const MODELS: Record<
     dtype: "fp32",
     task: "feature-extraction",
   },
-  granite350m: {
-    modelId: "onnx-community/granite-4.0-350m-ONNX-web",
-    title: "Granite-4.0 350M (fp16)",
-    dtype: "fp16",
-    task: "text-generation",
-  },
-  granite1B: {
-    modelId: "onnx-community/granite-4.0-1b-ONNX-web",
-    title: "Granite-4.0 1B (q4)",
-    dtype: "q4",
-    task: "text-generation",
-  },
-  granite3B: {
-    modelId: "onnx-community/granite-4.0-micro-ONNX-web",
-    title: "Granite-4.0 3B (q4f16)",
-    dtype: "q4f16",
-    task: "text-generation",
-  },
-  gemma4E2B: {
-    modelId: "onnx-community/gemma-4-E2B-it-ONNX",
-    title: "Gemma 4 E2B (q4f16)",
-    dtype: "q4f16",
-    task: "text-generation",
-  },
-  gemma4E4B: {
-    modelId: "onnx-community/gemma-4-E4B-it-ONNX",
-    title: "Gemma 4 E4B (q4f16)",
-    dtype: "q4f16",
-    task: "text-generation",
-  },
 };
 
-export const TEXT_GENERATION_ID = "gemma4E2B";
 export const FEATURE_EXTRACTION_ID = "allMiniLM";
 
-export const REQUIRED_MODEL_IDS = [
-  MODELS[FEATURE_EXTRACTION_ID].modelId,
-  MODELS[TEXT_GENERATION_ID].modelId,
-];
+export const OMLX_BASE_URL =
+  import.meta.env.VITE_OMLX_BASE_URL || "http://127.0.0.1:8090/v1";
+export const OMLX_MODEL_ID = import.meta.env.VITE_OMLX_MODEL_ID || "";
+export const OMLX_API_KEY = import.meta.env.VITE_OMLX_API_KEY || "not-needed";

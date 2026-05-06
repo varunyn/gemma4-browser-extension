@@ -55,14 +55,26 @@ export const validateWebMCPToolArguments = (
   const validArguments = Object.entries(args).filter(([key, value]) => {
     const isValidKey = key in expectedArguments;
     const expectedType = expectedArguments[key]?.type;
-    const actualType = typeof value;
+    const actualType =
+      expectedType === "number" &&
+      typeof value === "string" &&
+      value.trim() !== "" &&
+      !Number.isNaN(Number(value))
+        ? "number"
+        : typeof value;
     const isValidType = expectedType === actualType;
 
     return isValidKey && isValidType;
   });
 
   const returnArgs: Record<string, any> = validArguments.reduce((acc, curr) => {
-    return { ...acc, [curr[0]]: curr[1] };
+    const expectedType = expectedArguments[curr[0]]?.type;
+    const value =
+      expectedType === "number" && typeof curr[1] === "string"
+        ? Number(curr[1])
+        : curr[1];
+
+    return { ...acc, [curr[0]]: value };
   }, {});
 
   if (tool.inputSchema.required.length !== 0) {

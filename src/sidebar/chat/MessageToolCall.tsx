@@ -85,7 +85,7 @@ export default function MessageToolCall({
             <div className="text-xs text-chrome-text-secondary mb-1">
               Result:
             </div>
-            <div className="text-xs bg-chrome-bg-primary px-2 py-1 rounded text-chrome-text-primary overflow-hidden">
+            <div className="text-xs bg-chrome-bg-primary px-2 py-1 rounded text-chrome-text-primary whitespace-pre-wrap max-h-72 overflow-auto font-mono leading-relaxed">
               {tools[currentToolIndex].result || "loading.."}
             </div>
           </div>

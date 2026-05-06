@@ -3,7 +3,7 @@ import { WebMCPTool } from "../agent/webMcp.tsx";
 export const getOpenTabsTool: WebMCPTool = {
   name: "get_open_tabs",
   description:
-    "Get information about all open browser tabs including their title, URL, description, and active status",
+    "List open browser tabs including title, URL, description, and active status. Use this for questions about open tabs or to locate a different tab. Do not use this to summarize the current site/page; use ask_website instead.",
   inputSchema: {
     type: "object",
     properties: {},
@@ -61,7 +61,7 @@ export const getOpenTabsTool: WebMCPTool = {
 export const goToTabTool: WebMCPTool = {
   name: "go_to_tab",
   description:
-    "Navigate to a specific browser tab by its ID and bring it to focus",
+    "Navigate to a specific browser tab by its ID and bring it to focus. After switching tabs, use ask_website if the user asked about that tab's page contents.",
   inputSchema: {
     type: "object",
     properties: {

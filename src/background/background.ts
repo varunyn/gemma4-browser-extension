@@ -1,6 +1,3 @@
-import { ModelRegistry } from "@huggingface/transformers";
-
-import { MODELS, REQUIRED_MODEL_IDS } from "../shared/constants.ts";
 import { AvailableTools } from "../shared/tools.ts";
 import {
   BackgroundMessages,
@@ -85,39 +82,10 @@ const getAgent = (): Agent => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === BackgroundTasks.CHECK_MODELS) {
-    Promise.all(
-      REQUIRED_MODEL_IDS.map(async (modelId) => {
-        const model = Object.values(MODELS).find((m) => m.modelId === modelId);
-        const files = await ModelRegistry.get_pipeline_files(
-          model.task,
-          modelId,
-          {
-            dtype: model.dtype,
-          }
-        );
-        const metas = await Promise.all(
-          files.map((file) => ModelRegistry.get_file_metadata(modelId, file))
-        );
-        const downloadSize = metas.reduce(
-          (total, item) => total + (item.size ?? 0),
-          0
-        );
-        const isCached = await ModelRegistry.is_pipeline_cached(
-          model.task,
-          modelId,
-          {
-            dtype: model.dtype,
-          }
-        );
-        return {
-          size: downloadSize,
-          cached: isCached,
-          modelId,
-        };
-      })
-    )
-      .then((results) => {
-        sendResponse({ status: ResponseStatus.SUCCESS, results });
+    getAgent()
+      .getTextGenerationPipeline()
+      .then(() => {
+        sendResponse({ status: ResponseStatus.SUCCESS, results: [] });
       })
       .catch((error: Error) => {
         console.error("CHECK_MODELS failed:", error);

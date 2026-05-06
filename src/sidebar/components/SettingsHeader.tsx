@@ -22,12 +22,12 @@ export default function SettingsHeader({
           <p className="text-sm text-chrome-text-secondary mt-1">
             Powered by{" "}
             <a
-              href="https://github.com/huggingface/transformers.js"
+              href="https://omlx.ai/"
               target="_blank"
               className="text-chrome-accent-primary hover:text-chrome-accent-hover no-underline"
               rel="noreferrer"
             >
-              🤗 Transformers.js
+              OMLX
             </a>
           </p>
         </div>

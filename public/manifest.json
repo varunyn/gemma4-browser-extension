@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Transformers.js Gemma 4 Browser Assistant",
+  "name": "Gemma 4 OMLX Browser Assistant",
   "version": "0.2.1",
-  "description": "On-device AI Browser Assistant powered by Transformers.js and Gemma 4 E2B",
+  "description": "Local AI browser assistant powered by OMLX and Gemma 4",
   "permissions": ["sidePanel", "storage", "scripting", "tabs"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "http://localhost:8090/*",
+    "http://127.0.0.1:8090/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

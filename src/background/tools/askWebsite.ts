@@ -165,6 +165,30 @@ class WebsiteContentManager {
     return scoredParts.slice(0, topK).map((item) => item.part);
   }
 
+  async overview(maxParts: number = 20): Promise<WebsitePart[]> {
+    if (this.currentPageParts.length === 0) {
+      await this.loadCurrentPage();
+    }
+
+    if (this.currentPageParts.length === 0) {
+      throw new Error("No content available on the current page");
+    }
+
+    const headings = this.currentPageParts.filter((part) =>
+      /^h[1-6]$/i.test(part.tagName)
+    );
+    const firstContentParts = this.currentPageParts.filter(
+      (part) => part.content.length > 0
+    );
+
+    return [...headings, ...firstContentParts]
+      .filter(
+        (part, index, all) =>
+          all.findIndex((candidate) => candidate.id === part.id) === index
+      )
+      .slice(0, maxParts);
+  }
+
   getCurrentParts(): WebsitePart[] {
     return this.currentPageParts;
   }
@@ -176,6 +200,29 @@ class WebsiteContentManager {
 
 let websiteContentManager: WebsiteContentManager | null = null;
 
+const isBroadPageOverviewQuery = (query: string): boolean => {
+  const normalized = query.toLowerCase();
+  return (
+    /\b(this|current)\s+(site|page|website)\b/.test(normalized) &&
+    /\b(content|about|summary|summarize|overview|tell me)\b/.test(normalized)
+  );
+};
+
+const formatWebsiteParts = (parts: WebsitePart[]): string => {
+  let response =
+    "Use only the following current-page excerpts. Do not infer sections or topics that are not shown here.\n\n";
+
+  parts.forEach((part, index) => {
+    response += `[${index + 1}] ID: ${part.id} | ${part.tagName.toUpperCase()} (Section ${part.sectionId}, Part ${part.paragraphId}):\n`;
+    response += `${part.content}\n\n`;
+  });
+
+  response +=
+    "Note: You can highlight any of these content pieces by using the highlight_website_element tool with the corresponding ID.";
+
+  return response;
+};
+
 export const createAskWebsiteTool = (
   featureExtractor: FeatureExtractor
 ): WebMCPTool => {
@@ -184,27 +231,27 @@ export const createAskWebsiteTool = (
   return {
     name: "ask_website",
     description:
-      "Search and retrieve relevant information from the current webpage. Use this tool whenever a user asks a question where you are not sure if you have the necessary informations to answer.",
+      "Search and retrieve information from the active/current webpage. Use this first whenever the user asks about this site, this page, the current page, page contents, what a site is about, or asks for a summary of the visible page.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "The question or search query to find relevant information on the current page",
+            "The user's question about the active/current page",
         },
         topK: {
           type: "number",
           description:
-            "Number of most relevant content pieces to return (default: 5)",
-          default: 5,
+            "Number of relevant content pieces to return (default: 8; use 12-20 for page summaries)",
+          default: 8,
         },
       },
       required: ["query"],
     },
     execute: async (args) => {
       const query = args.query as string;
-      const topK = (args.topK as number | undefined) ?? 3;
+      const topK = (args.topK as number | undefined) ?? 8;
 
       if (!query || typeof query !== "string") {
         return `Error: query parameter must be a non-empty string. Received: ${JSON.stringify(args)}`;
@@ -215,19 +262,23 @@ export const createAskWebsiteTool = (
       }
 
       try {
-        const results = await websiteContentManager.search(query, topK);
+        const results = isBroadPageOverviewQuery(query)
+          ? await websiteContentManager.overview(Math.max(topK, 20))
+          : await websiteContentManager.search(query, topK);
 
         if (results.length === 0) {
           return "No relevant content found on the current page.";
         }
 
-        let response = `Found ${results.length} relevant content piece(s):\n\n`;
-        results.forEach((part, index) => {
-          response += `[${index + 1}] ID: ${part.id} | ${part.tagName.toUpperCase()} (Section ${part.sectionId}, Part ${part.paragraphId}):\n`;
-          response += `${part.content}\n\n`;
-        });
+        const response = formatWebsiteParts(results);
 
-        response += `\nNote: You can highlight any of these content pieces by using the highlight_website_element tool with the corresponding ID.`;
+        console.debug("[gemma4-extension] ask_website result", {
+          query,
+          topK,
+          resultCount: results.length,
+          resultIds: results.map(({ id }) => id),
+          response,
+        });
 
         return response;
       } catch (error) {

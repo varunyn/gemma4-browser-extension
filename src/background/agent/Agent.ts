@@ -1,23 +1,12 @@
 import {
-  DynamicCache,
-  TextGenerationPipeline,
-  TextStreamer,
-  pipeline,
-} from "@huggingface/transformers";
-
-import { MODELS, TEXT_GENERATION_ID } from "../../shared/constants.ts";
-import {
   AgentMetrics,
   ChatMessage,
   ChatMessageAssistant,
 } from "../../shared/types.ts";
 import { extractToolCalls } from "./extractToolCalls.ts";
+import { checkOmlxConnection, generateWithOmlx } from "./omlxClient.ts";
 import { ToolCallPayload } from "./types.ts";
-import {
-  WebMCPTool,
-  executeWebMCPTool,
-  webMCPToolToChatTemplateTool,
-} from "./webMcp.tsx";
+import { WebMCPTool, executeWebMCPTool } from "./webMcp.tsx";
 
 type Message = {
   role: "system" | "user" | "assistant" | "tool";
@@ -28,12 +17,15 @@ type Message = {
 type GenerationMetrics = AgentMetrics;
 export type AgentRunMetrics = AgentMetrics;
 
-let pipe: TextGenerationPipeline | null = null;
 const SYSTEM_PROMPT =
   "You are a helpful assistant with access to external tools declared in this conversation. " +
   "Never claim you do not have tools when tool declarations are present. " +
   "When asked what tools you have, list the declared tool names exactly. " +
-  "If you decide to use a tool, briefly explain what you are doing before calling it.";
+  "When the user asks about 'this site', 'this page', 'current page', or page contents, use ask_website on the active tab. " +
+  "Use get_open_tabs only when the user asks about tabs or when you truly need to locate a different tab. " +
+  "If you decide to use a tool, briefly explain what you are doing before calling it. " +
+  "When answering from tool results, use only the concrete facts in those results. " +
+  "Do not invent generic page sections, topics, or summaries that are not present in the tool output.";
 const createInitialMessages = (): Array<Message> => [
   {
     role: "system",
@@ -44,32 +36,23 @@ const END_OF_TEXT_TOKEN_REGEX = /<\|end_of_text\|>/g;
 const sanitizeModelText = (text: string) =>
   text.replace(END_OF_TEXT_TOKEN_REGEX, "").trim();
 
-const getTextGenerationPipeline = async (
-  onDownloadProgress: (id: string, percentage: number) => void = () => {}
-): Promise<TextGenerationPipeline> => {
-  if (pipe) return pipe;
+const isCurrentPageRequest = (prompt: string): boolean => {
+  const normalized = prompt.toLowerCase();
+  return (
+    /\b(this|current)\s+(site|page|website|tab)\b/.test(normalized) ||
+    /\b(page|site|website)\s+content(s)?\b/.test(normalized)
+  );
+};
 
-  try {
-    const m = MODELS[TEXT_GENERATION_ID];
-    pipe = (await pipeline("text-generation", m.modelId, {
-      dtype: m.dtype,
-      device: "webgpu",
-      progress_callback: (i) => {
-        if (i.status === "progress_total") {
-          onDownloadProgress(m.modelId, i.progress);
-        }
-      },
-    })) as TextGenerationPipeline;
-
-    return pipe;
-  } catch (error) {
-    console.error("Failed to initialize text generation pipeline:", error);
-    throw error;
+const createUserPrompt = (prompt: string): string => {
+  if (!isCurrentPageRequest(prompt)) {
+    return prompt;
   }
+
+  return `${prompt}\n\nContext hint: The user is asking about the active/current page. Use ask_website to inspect the page contents before answering.`;
 };
 
 class Agent {
-  private pastKeyValues: DynamicCache | null = null;
   private messages: Array<Message> = createInitialMessages();
   private _chatMessages: Array<ChatMessage> = [];
   private chatMessagesListener: Array<
@@ -96,7 +79,11 @@ class Agent {
     this.tools = [...this.tools, tool];
   };
 
-  public getTextGenerationPipeline = getTextGenerationPipeline;
+  public getTextGenerationPipeline = async (
+    _onDownloadProgress: (id: string, percentage: number) => void = () => {}
+  ) => {
+    await checkOmlxConnection();
+  };
 
   public generateText = async (
     prompt: string,
@@ -114,103 +101,19 @@ class Agent {
     if (options.appendPromptMessage ?? true) {
       this.messages = [...this.messages, { role, content: prompt }];
     }
-    const pipe = await this.getTextGenerationPipeline();
     const conversation = [...this.messages];
-    if (!this.pastKeyValues) {
-      this.pastKeyValues = new DynamicCache();
-    }
-    let response = "";
-
-    // Add placeholder assistant message for streaming UI updates
-    this.messages.push({ role: "assistant", content: "" });
-
-    const streamer = new TextStreamer(pipe.tokenizer, {
-      skip_prompt: true,
-      skip_special_tokens: false,
-      callback_function: (token: string) => {
-        if (firstTokenAt === null) {
-          firstTokenAt = performance.now();
-        }
-        response = response + token;
-        this.messages = this.messages.map((message, index, all) => ({
-          ...message,
-          content: index === all.length - 1 ? response : message.content,
-        }));
-        onResponseUpdate(sanitizeModelText(response));
-      },
+    const generation = await generateWithOmlx({
+      messages: conversation,
+      tools: this.tools,
     });
+    firstTokenAt = performance.now();
 
-    const input = pipe.tokenizer.apply_chat_template(conversation, {
-      tools: this.tools.map(webMCPToolToChatTemplateTool),
-      add_generation_prompt: true,
-      return_dict: true,
-    }) as any;
+    const promptLength = generation.promptTokens;
+    const generatedTokens = generation.generatedTokens;
+    const response = sanitizeModelText(generation.text);
+    onResponseUpdate(response);
 
-    const output: any = await pipe(conversation, {
-      tools: this.tools.map(webMCPToolToChatTemplateTool),
-      add_generation_prompt: true,
-      past_key_values: this.pastKeyValues,
-      max_new_tokens: 1024,
-      do_sample: false,
-      streamer,
-    });
-
-    const promptLength = Number(input.input_ids.dims.at(-1) ?? 0);
-    const finalGeneratedText = output?.[0]?.generated_text;
-
-    if (Array.isArray(finalGeneratedText) && response.trim().length === 0) {
-      const lastMessage = finalGeneratedText[finalGeneratedText.length - 1];
-      if (typeof lastMessage === "string") {
-        response = lastMessage;
-      } else {
-        const content =
-          typeof lastMessage?.content === "string" ? lastMessage.content : "";
-        const toolCalls = Array.isArray(lastMessage?.tool_calls)
-          ? lastMessage.tool_calls
-          : [];
-
-        if (toolCalls.length > 0) {
-          const renderedToolCalls = toolCalls
-            .map((toolCall: any) => {
-              const functionName = toolCall?.function?.name;
-              const functionArguments = toolCall?.function?.arguments ?? {};
-              if (typeof functionName !== "string" || !functionName.trim()) {
-                return "";
-              }
-
-              const serializedArguments =
-                typeof functionArguments === "string"
-                  ? functionArguments
-                  : JSON.stringify(functionArguments);
-
-              return `<|tool_call>call:${functionName}${serializedArguments}<tool_call|>`;
-            })
-            .filter(Boolean)
-            .join("");
-
-          if (renderedToolCalls) response = renderedToolCalls;
-          else if (content.length > 0) response = content;
-        } else if (content.length > 0) {
-          response = content;
-        }
-      }
-    }
-
-    const generatedIds: any = pipe.tokenizer(response, {
-      add_special_tokens: false,
-    }).input_ids;
-    const generatedTokens = Array.isArray(generatedIds?.[0])
-      ? generatedIds[0].length
-      : Array.isArray(generatedIds)
-        ? generatedIds.length
-        : 0;
-
-    response = sanitizeModelText(response);
-
-    this.messages = this.messages.map((message, index, all) => ({
-      ...message,
-      content: index === all.length - 1 ? response : message.content,
-    }));
+    this.messages = [...this.messages, { role: "assistant", content: response }];
 
     const end = performance.now();
     const prefillMs = Math.max(0, (firstTokenAt ?? end) - start);
@@ -245,6 +148,7 @@ class Agent {
       ...this.chatMessages,
       { role: "user", content: prompt },
     ];
+    prompt = createUserPrompt(prompt);
     const prevChatMessages = this.chatMessages;
     const assistantMessage: ChatMessageAssistant = {
       role: "assistant",
@@ -371,7 +275,7 @@ class Agent {
 
         this.chatMessages = [...prevChatMessages, assistantMessage];
         prompt =
-          "Use the tool response to answer the user's last request. Do not call tools again unless required.";
+          "Use the tool response to answer the user's last request. Include concrete titles, topics, names, or details from the tool output. If the tool output only identifies or navigates browser tabs and the user asked about site/page contents, call ask_website on the active tab before answering. If the tool output is too thin to answer confidently, say what is missing. Do not call tools again unless required.";
         roleForGeneration = "user";
         appendPromptMessage = true;
       }
@@ -419,8 +323,6 @@ class Agent {
 
   public clear() {
     this.messages = createInitialMessages();
-    void this.pastKeyValues?.dispose();
-    this.pastKeyValues = null;
     this.chatMessages = [];
   }
 }

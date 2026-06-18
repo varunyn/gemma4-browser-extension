@@ -15,6 +15,12 @@ type WebMCPProperty =
       type: "boolean";
       description: string;
       default?: boolean;
+    }
+  | {
+      type: "array";
+      description: string;
+      items: Record<string, any>;
+      default?: Array<any>;
     };
 
 export interface WebMCPTool {
@@ -55,11 +61,12 @@ export const validateWebMCPToolArguments = (
   const validArguments = Object.entries(args).filter(([key, value]) => {
     const isValidKey = key in expectedArguments;
     const expectedType = expectedArguments[key]?.type;
-    const actualType =
-      expectedType === "number" &&
-      typeof value === "string" &&
-      value.trim() !== "" &&
-      !Number.isNaN(Number(value))
+    const actualType = Array.isArray(value)
+      ? "array"
+      : expectedType === "number" &&
+          typeof value === "string" &&
+          value.trim() !== "" &&
+          !Number.isNaN(Number(value))
         ? "number"
         : typeof value;
     const isValidType = expectedType === actualType;

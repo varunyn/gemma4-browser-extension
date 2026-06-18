@@ -8,6 +8,7 @@ import Agent from "./agent/Agent.ts";
 import {
   createAskWebsiteTool,
   highlightWebsiteElementTool,
+  replacePageTextTool,
 } from "./tools/askWebsite.ts";
 //import { googleSearchTool } from "./tools/search.ts";
 import {
@@ -46,6 +47,7 @@ const availableTools: Record<string, () => any> = {
   [AvailableTools.FIND_HISTORY]: () => vectorHistory.findHistoryTool,
   [AvailableTools.ASK_WEBSITE]: () => createAskWebsiteTool(featureExtractor),
   [AvailableTools.HIGHLIGHT_WEBSITE_ELEMENT]: () => highlightWebsiteElementTool,
+  [AvailableTools.REPLACE_PAGE_TEXT]: () => replacePageTextTool,
   //[AvailableTools.GOOGLE_SEARCH]: () => googleSearchTool,
 };
 

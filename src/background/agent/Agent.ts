@@ -22,6 +22,7 @@ const SYSTEM_PROMPT =
   "Never claim you do not have tools when tool declarations are present. " +
   "When asked what tools you have, list the declared tool names exactly. " +
   "When the user asks about 'this site', 'this page', 'current page', or page contents, use ask_website on the active tab. " +
+  "When the user asks to edit, rewrite, simplify, translate, or otherwise change visible page text in place, use ask_website first to get element IDs, then use replace_page_text with the requested replacements. " +
   "Use get_open_tabs only when the user asks about tabs or when you truly need to locate a different tab. " +
   "If you decide to use a tool, briefly explain what you are doing before calling it. " +
   "When answering from tool results, use only the concrete facts in those results. " +
@@ -275,7 +276,7 @@ class Agent {
 
         this.chatMessages = [...prevChatMessages, assistantMessage];
         prompt =
-          "Use the tool response to answer the user's last request. Include concrete titles, topics, names, or details from the tool output. If the tool output only identifies or navigates browser tabs and the user asked about site/page contents, call ask_website on the active tab before answering. If the tool output is too thin to answer confidently, say what is missing. Do not call tools again unless required.";
+          "Use the tool response to answer the user's last request. Include concrete titles, topics, names, or details from the tool output. If the user asked to edit, rewrite, simplify, translate, or otherwise change visible page text in place, call replace_page_text with replacements for the relevant element IDs. If the tool output only identifies or navigates browser tabs and the user asked about site/page contents, call ask_website on the active tab before answering. If the tool output is too thin to answer confidently, say what is missing. Do not call tools again unless required.";
         roleForGeneration = "user";
         appendPromptMessage = true;
       }

@@ -24,6 +24,7 @@ export enum ContentTasks {
   EXTRACT_PAGE_DATA,
   HIGHLIGHT_ELEMENTS,
   CLEAR_HIGHLIGHTS,
+  REPLACE_TEXT,
 }
 
 export type Dtype = "fp32" | "fp16" | "q4" | "q4f16";
@@ -68,4 +69,15 @@ export interface WebsitePart {
   content: string;
   sentences: string[];
   embeddings?: number[][];
+}
+
+export interface PageTextReplacement {
+  id: string;
+  text: string;
+}
+
+export interface PageTextReplacementResult {
+  id: string;
+  success: boolean;
+  error?: string;
 }

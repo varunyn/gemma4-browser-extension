@@ -39,6 +39,10 @@ const toolMetadata: Record<ToolName, { label: string; description: string }> = {
     label: "Highlight Website Element",
     description: "Highlight elements on a webpage",
   },
+  [AvailableTools.REPLACE_PAGE_TEXT]: {
+    label: "Replace Page Text",
+    description: "Temporarily change visible text on the current page",
+  },
 };
 
 export default function ChatToolsModal({

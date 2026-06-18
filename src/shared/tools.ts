@@ -6,6 +6,7 @@ export const AvailableTools = {
   FIND_HISTORY: "find_history",
   ASK_WEBSITE: "ask_website",
   HIGHLIGHT_WEBSITE_ELEMENT: "highlight_website_element",
+  REPLACE_PAGE_TEXT: "replace_page_text",
   // GOOGLE_SEARCH: "google_search", // Commented out - not implemented yet
 } as const;
 

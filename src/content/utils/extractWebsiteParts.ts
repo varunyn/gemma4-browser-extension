@@ -6,6 +6,10 @@ const ignoredSelector = [
   "header",
   "footer",
   "aside",
+  "script",
+  "style",
+  "svg",
+  "noscript",
   "dialog",
   "menu",
   "[hidden]",
@@ -20,6 +24,36 @@ const noiseText = new Set([
   "Sorry, something went wrong.",
   "You don't have any lists yet.",
 ]);
+
+const semanticTextSelector = [
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "li",
+  "blockquote",
+  "figcaption",
+  "td",
+  "th",
+  "dt",
+  "dd",
+  "pre",
+].join(",");
+
+const broadTextSelector = [
+  semanticTextSelector,
+  "a",
+  "button",
+  "label",
+  "summary",
+  "span",
+  "div",
+  "section",
+  "article",
+].join(",");
 
 const isVisible = (element: Element): boolean => {
   const htmlElement = element as HTMLElement;
@@ -53,18 +87,76 @@ const shouldExtractElement = (element: Element): boolean => {
   return true;
 };
 
-const extractWebsiteParts = (rootElement: HTMLElement): Array<WebsitePart> => {
-  const elements = Array.from(
-    rootElement.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li")
+const normalizeText = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+const getDirectText = (element: Element): string =>
+  normalizeText(
+    Array.from(element.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? "")
+      .join(" ")
+  );
+
+const hasExtractableChild = (element: Element): boolean =>
+  Array.from(element.children).some((child) => {
+    if (!shouldExtractElement(child)) {
+      return false;
+    }
+
+    const directText = getDirectText(child);
+    return directText.length > 0 || child.matches(semanticTextSelector);
+  });
+
+const isUsefulTextElement = (element: Element): boolean => {
+  if (element.matches(semanticTextSelector)) {
+    return true;
+  }
+
+  const directText = getDirectText(element);
+  if (directText.length >= 2) {
+    return true;
+  }
+
+  return !hasExtractableChild(element);
+};
+
+const getCandidateElements = (rootElement: HTMLElement): Array<Element> => {
+  const semanticElements = Array.from(
+    rootElement.querySelectorAll(semanticTextSelector)
   ).filter(shouldExtractElement);
+
+  const semanticTextLength = semanticElements.reduce(
+    (total, element) => total + normalizeText(element.textContent ?? "").length,
+    0
+  );
+
+  if (semanticElements.length >= 3 && semanticTextLength >= 200) {
+    return semanticElements;
+  }
+
+  return Array.from(rootElement.querySelectorAll(broadTextSelector))
+    .filter(shouldExtractElement)
+    .filter(isUsefulTextElement);
+};
+
+const extractWebsiteParts = (rootElement: HTMLElement): Array<WebsitePart> => {
+  const elements = getCandidateElements(rootElement);
 
   clearRegistry();
 
   const result: Array<WebsitePart> = [];
   let currentSectionId: number = 0;
   let currentPartId: number = 0;
+  const seenContent = new Set<string>();
 
   elements.map((element) => {
+    const content = normalizeText(element.textContent ?? "");
+
+    if (seenContent.has(content)) {
+      return;
+    }
+    seenContent.add(content);
+
     currentPartId++;
     if (/^h[1-6]$/i.test(element.tagName)) {
       currentSectionId++;
@@ -74,7 +166,6 @@ const extractWebsiteParts = (rootElement: HTMLElement): Array<WebsitePart> => {
     const id = `${currentSectionId}-${currentPartId}`;
     registerElement(element, id);
 
-    const content = element.textContent?.replace(/\s+/g, " ").trim() || "";
     const sentences = content
       .split(/(?<=[.!?])\s+/)
       .filter((sentence) => sentence.length > 0);

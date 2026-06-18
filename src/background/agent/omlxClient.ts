@@ -47,6 +47,20 @@ const createOmlxUrl = (path: string) =>
 
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
+const scoreDiscoveredModel = (model: OmlxModel): number => {
+  const id = model.id.toLowerCase();
+  let score = 0;
+
+  if (id.includes("gemma")) score += 100;
+  if (id.includes("4bit")) score += 20;
+  if (id.includes("it")) score += 10;
+  if (id.includes("tts")) score -= 50;
+  if (id.includes("markitdown")) score -= 50;
+  if (id.includes("assistant-bf16")) score -= 20;
+
+  return score;
+};
+
 export const getOmlxModelId = async (): Promise<string> => {
   if (OMLX_MODEL_ID.trim()) {
     return OMLX_MODEL_ID.trim();
@@ -67,8 +81,9 @@ export const getOmlxModelId = async (): Promise<string> => {
   const payload = (await response.json()) as { data?: OmlxModel[] };
   const models = payload.data ?? [];
   const modelId =
-    models.find((model) => model.id.toLowerCase().includes("gemma"))?.id ??
-    models[0]?.id;
+    [...models].sort(
+      (a, b) => scoreDiscoveredModel(b) - scoreDiscoveredModel(a)
+    )[0]?.id ?? models[0]?.id;
 
   if (!modelId) {
     throw new Error(
@@ -114,7 +129,7 @@ export const generateWithOmlx = async ({
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(
-      `OMLX generation failed (${response.status} ${response.statusText}): ${detail}`
+      `OMLX generation failed for model "${model}" (${response.status} ${response.statusText}): ${detail}`
     );
   }
 

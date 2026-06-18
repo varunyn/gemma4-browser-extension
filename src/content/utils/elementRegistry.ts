@@ -15,6 +15,23 @@ export const getElementById = (id: string): Element | undefined => {
   return idToElement.get(id);
 };
 
+export const replaceElementTextById = (
+  id: string,
+  text: string
+): { success: boolean; error?: string } => {
+  const element = getElementById(id);
+
+  if (!element) {
+    return {
+      success: false,
+      error: `No extracted element found for ID: ${id}`,
+    };
+  }
+
+  element.textContent = text;
+  return { success: true };
+};
+
 export const clearRegistry = (): void => {
   idToElement.clear();
 };

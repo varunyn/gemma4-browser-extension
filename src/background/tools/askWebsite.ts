@@ -1,6 +1,52 @@
-import { ContentTasks, WebsitePart } from "../../shared/types.ts";
+import {
+  ContentTasks,
+  PageTextReplacement,
+  PageTextReplacementResult,
+  WebsitePart,
+} from "../../shared/types.ts";
 import { WebMCPTool } from "../agent/webMcp.tsx";
 import FeatureExtractor from "../utils/FeatureExtractor.ts";
+
+const CONTENT_SCRIPT_FILE = "content.js";
+const CONTENT_SCRIPT_MISSING_ERROR = "Receiving end does not exist";
+
+const isInjectablePageUrl = (url?: string): boolean =>
+  Boolean(url?.startsWith("http://") || url?.startsWith("https://"));
+
+const isMissingContentScriptError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(CONTENT_SCRIPT_MISSING_ERROR);
+
+const ensureInjectableTab = async (tabId: number): Promise<chrome.tabs.Tab> => {
+  const tab = await chrome.tabs.get(tabId);
+
+  if (!tab.id || !isInjectablePageUrl(tab.url)) {
+    throw new Error(
+      `Cannot inspect this page. Open a normal http or https webpage first. Current URL: ${tab.url ?? "unknown"}`
+    );
+  }
+
+  return tab;
+};
+
+const sendContentMessage = async <T>(
+  tabId: number,
+  message: Record<string, any>
+): Promise<T> => {
+  try {
+    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  } catch (error) {
+    if (!isMissingContentScriptError(error)) {
+      throw error;
+    }
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [CONTENT_SCRIPT_FILE],
+    });
+
+    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  }
+};
 
 class WebsiteContentManager {
   private currentPageParts: WebsitePart[] = [];
@@ -91,11 +137,15 @@ class WebsiteContentManager {
       tabId = tab.id;
     }
 
+    await ensureInjectableTab(tabId);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    const response = await chrome.tabs.sendMessage(tabId, {
-      type: ContentTasks.EXTRACT_PAGE_DATA,
-    });
+    const response = await sendContentMessage<{ parts: Array<WebsitePart> }>(
+      tabId,
+      {
+        type: ContentTasks.EXTRACT_PAGE_DATA,
+      }
+    );
 
     const parts = response.parts as Array<WebsitePart>;
 
@@ -320,7 +370,8 @@ export const highlightWebsiteElementTool: WebMCPTool = {
         return "Error: No active tab found";
       }
 
-      await chrome.tabs.sendMessage(tab.id, {
+      await ensureInjectableTab(tab.id);
+      await sendContentMessage(tab.id, {
         type: ContentTasks.HIGHLIGHT_ELEMENTS,
         payload: {
           id,
@@ -330,6 +381,101 @@ export const highlightWebsiteElementTool: WebMCPTool = {
       return `Successfully highlighted element with ID: ${id}`;
     } catch (error) {
       return `Error highlighting element: ${error.toString()}`;
+    }
+  },
+};
+
+const isValidReplacement = (value: unknown): value is PageTextReplacement => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const replacement = value as Record<string, unknown>;
+  return (
+    typeof replacement.id === "string" &&
+    replacement.id.trim().length > 0 &&
+    typeof replacement.text === "string"
+  );
+};
+
+export const replacePageTextTool: WebMCPTool = {
+  name: "replace_page_text",
+  description:
+    "Temporarily replace visible text on the active webpage by element ID. Use ask_website first to get IDs, then call this when the user asks to edit, rewrite, simplify, translate, or otherwise change text directly on the page. Changes disappear when the page refreshes.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      replacements: {
+        type: "array",
+        description:
+          "Array of replacements. Each item must include id from ask_website and replacement text.",
+        items: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "The element ID from ask_website, such as 1-2.",
+            },
+            text: {
+              type: "string",
+              description: "The new visible text for that element.",
+            },
+          },
+          required: ["id", "text"],
+        },
+      },
+    },
+    required: ["replacements"],
+  },
+  execute: async (args) => {
+    const replacements = args.replacements as unknown;
+
+    if (!Array.isArray(replacements) || replacements.length === 0) {
+      return "Error: replacements must be a non-empty array of { id, text } objects.";
+    }
+
+    const invalidIndex = replacements.findIndex(
+      (replacement) => !isValidReplacement(replacement)
+    );
+    if (invalidIndex !== -1) {
+      return `Error: replacement at index ${invalidIndex} must include a non-empty string id and string text.`;
+    }
+
+    try {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+
+      if (!tab.id) {
+        return "Error: No active tab found";
+      }
+
+      await ensureInjectableTab(tab.id);
+      const response = await sendContentMessage<{
+        results: PageTextReplacementResult[];
+      }>(tab.id, {
+        type: ContentTasks.REPLACE_TEXT,
+        payload: {
+          replacements,
+        },
+      });
+
+      const succeeded = response.results.filter(({ success }) => success);
+      const failed = response.results.filter(({ success }) => !success);
+
+      return JSON.stringify(
+        {
+          changed: succeeded.length,
+          failed: failed.length,
+          results: response.results,
+          note: "Changes are temporary and will disappear on refresh.",
+        },
+        null,
+        2
+      );
+    } catch (error) {
+      return `Error replacing page text: ${error.toString()}`;
     }
   },
 };

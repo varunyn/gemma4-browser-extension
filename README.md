@@ -1,10 +1,10 @@
-# Gemma 4 OMLX Browser Assistant
+# Local AI Browser Assistant
 
 ## About this extension
 
-A local AI browser assistant that uses your OMLX server for Gemma 4 chat inference. The extension provides a sidebar chat agent that can understand natural language commands and interact with your browser through a set of tools.
+A local AI browser assistant that uses Ollama or OMLX for chat inference. The extension provides a sidebar chat agent that can understand natural language commands and interact with your browser through a set of tools.
 
-Chat stays on your machine through OMLX. Page search and history search use a small local embeddings model cached by the browser.
+Chat stays on your machine through your selected local inference provider. Page search and history search use a small local embeddings model cached by the browser.
 
 ### What can it do?
 
@@ -29,17 +29,52 @@ Chat stays on your machine through OMLX. Page search and history search use a sm
 ### Prerequisites
 
 - Chrome
-- OMLX running locally
-- A loaded Gemma model in OMLX
+- Ollama or OMLX running locally
+- A loaded chat model in your selected provider
 - Node.js and pnpm
 
-The default OMLX endpoint is:
+The default Ollama endpoint is:
+
+```bash
+http://127.0.0.1:11434/v1
+```
+
+OMLX is also supported at:
 
 ```bash
 http://127.0.0.1:8090/v1
 ```
 
-You can override it with `.env`:
+Choose the provider with `.env`:
+
+```bash
+VITE_INFERENCE_PROVIDER=ollama
+VITE_INFERENCE_MODEL_ID=gemma3:latest
+```
+
+The sidebar can override only the selected model. Provider, base URL, and API key come from the build defaults.
+
+Provider-specific env vars are also supported:
+
+```bash
+VITE_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+VITE_OLLAMA_MODEL_ID=gemma3:latest
+VITE_OLLAMA_API_KEY=not-needed
+VITE_OLLAMA_NUM_CTX=4096
+VITE_INFERENCE_MAX_TOKENS=1024
+VITE_INFERENCE_REQUEST_TIMEOUT_MS=120000
+```
+
+For a generic OpenAI-compatible local server:
+
+```bash
+VITE_INFERENCE_PROVIDER=openai
+VITE_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:3001/v1
+VITE_OPENAI_COMPATIBLE_MODEL_ID=
+VITE_OPENAI_COMPATIBLE_API_KEY=not-needed
+```
+
+The legacy OMLX env vars still work for OMLX builds:
 
 ```bash
 VITE_OMLX_BASE_URL=http://127.0.0.1:8090/v1
@@ -47,7 +82,9 @@ VITE_OMLX_MODEL_ID=gemma-4-26b-a4b-it-4bit
 VITE_OMLX_API_KEY=not-needed
 ```
 
-If `VITE_OMLX_MODEL_ID` is empty, the extension discovers models from `/v1/models` and prefers a model with `gemma` in its id.
+If no model is selected, the extension discovers models from `/v1/models` and prefers a model with `gemma` in its id. You can also pick the model from the extension header.
+
+For memory-constrained local runs, keep `VITE_OLLAMA_NUM_CTX` modest. Ollama may default to a much larger context on Apple Silicon, which increases memory pressure for larger models.
 
 ### Install
 
@@ -65,10 +102,11 @@ Then load the extension:
 
 ## Usage
 
-1. Start OMLX.
+1. Start Ollama or OMLX.
 2. Click the extension icon to open the sidebar.
-3. On first use, download the small embeddings model for page search.
-4. Chat with the assistant.
+3. Pick the model in the sidebar header.
+4. On first use, download the small embeddings model for page search.
+5. Chat with the assistant.
 
 ## Architecture
 
@@ -77,9 +115,9 @@ User Input (Side Panel)
     ↓
 Background Script (Agent)
     ↓
-OMLX /v1/chat/completions
+Ollama or OMLX /v1/chat/completions
     ↓
-Gemma 4 running locally on your Mac
+Local model running on your Mac
     ↓
 Browser tools when needed
     ↓

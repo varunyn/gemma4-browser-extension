@@ -4,7 +4,10 @@ import {
   ChatMessageAssistant,
 } from "../../shared/types.ts";
 import { extractToolCalls } from "./extractToolCalls.ts";
-import { checkOmlxConnection, generateWithOmlx } from "./omlxClient.ts";
+import {
+  checkLocalInferenceConnection,
+  generateWithLocalInference,
+} from "./localInferenceClient.ts";
 import { ToolCallPayload } from "./types.ts";
 import { WebMCPTool, executeWebMCPTool } from "./webMcp.tsx";
 
@@ -22,10 +25,11 @@ const SYSTEM_PROMPT =
   "Never claim you do not have tools when tool declarations are present. " +
   "When asked what tools you have, list the declared tool names exactly. " +
   "When the user asks about 'this site', 'this page', 'current page', or page contents, use ask_website on the active tab. " +
-  "When the user asks to edit, rewrite, simplify, translate, or otherwise change visible page text in place, use ask_website first to get element IDs, then use replace_page_text with the requested replacements. " +
+  "When the user asks to edit, rewrite, simplify, translate, or otherwise change visible page text in place, call ask_website first and use only the exact element IDs returned by ask_website before calling replace_page_text. Never guess element IDs. " +
   "Use get_open_tabs only when the user asks about tabs or when you truly need to locate a different tab. " +
   "If you decide to use a tool, briefly explain what you are doing before calling it. " +
   "When answering from tool results, use only the concrete facts in those results. " +
+  "When replace_page_text changes only a subset of page elements, say it changed those elements; do not claim the entire page was translated or edited. " +
   "Do not invent generic page sections, topics, or summaries that are not present in the tool output.";
 const createInitialMessages = (): Array<Message> => [
   {
@@ -45,7 +49,21 @@ const isCurrentPageRequest = (prompt: string): boolean => {
   );
 };
 
+const isPageTextMutationRequest = (prompt: string): boolean => {
+  const normalized = prompt.toLowerCase();
+  return (
+    /\b(this|current)\s+(site|page|website|tab)\b/.test(normalized) &&
+    /\b(edit|rewrite|replace|change|simplify|translate|localize|reword)\b/.test(
+      normalized
+    )
+  );
+};
+
 const createUserPrompt = (prompt: string): string => {
+  if (isPageTextMutationRequest(prompt)) {
+    return `${prompt}\n\nContext hint: The user wants visible text on the active/current page changed in place. First call ask_website to extract current-page text and element IDs. Then call replace_page_text using only IDs returned by ask_website. Do not guess IDs. The replace_page_text arguments must be exactly shaped like {"replacements":[{"id":"ID_FROM_ASK_WEBSITE","text":"new visible text"}]}.`;
+  }
+
   if (!isCurrentPageRequest(prompt)) {
     return prompt;
   }
@@ -83,7 +101,7 @@ class Agent {
   public getTextGenerationPipeline = async (
     _onDownloadProgress: (id: string, percentage: number) => void = () => {}
   ) => {
-    await checkOmlxConnection();
+    await checkLocalInferenceConnection();
   };
 
   public generateText = async (
@@ -103,7 +121,7 @@ class Agent {
       this.messages = [...this.messages, { role, content: prompt }];
     }
     const conversation = [...this.messages];
-    const generation = await generateWithOmlx({
+    const generation = await generateWithLocalInference({
       messages: conversation,
       tools: this.tools,
     });
@@ -276,7 +294,7 @@ class Agent {
 
         this.chatMessages = [...prevChatMessages, assistantMessage];
         prompt =
-          "Use the tool response to answer the user's last request. Include concrete titles, topics, names, or details from the tool output. If the user asked to edit, rewrite, simplify, translate, or otherwise change visible page text in place, call replace_page_text with replacements for the relevant element IDs. If the tool output only identifies or navigates browser tabs and the user asked about site/page contents, call ask_website on the active tab before answering. If the tool output is too thin to answer confidently, say what is missing. Do not call tools again unless required.";
+          "Use the tool response to answer the user's last request. Include concrete titles, topics, names, or details from the tool output. If the user asked to edit, rewrite, simplify, translate, or otherwise change visible page text in place and ask_website returned page excerpts, call replace_page_text with arguments exactly shaped like {\"replacements\":[{\"id\":\"ID_FROM_ASK_WEBSITE\",\"text\":\"new visible text\"}]}. Use only IDs returned by ask_website. If replace_page_text changed a subset of page elements, say only those elements were changed; do not claim the entire page was translated or edited. If replace_page_text reports missing or unknown element IDs, call ask_website on the active tab before trying replace_page_text again. If the tool output only identifies or navigates browser tabs and the user asked about site/page contents, call ask_website on the active tab before answering. If the tool output is too thin to answer confidently, say what is missing. Do not call tools again unless required.";
         roleForGeneration = "user";
         appendPromptMessage = true;
       }
@@ -315,10 +333,34 @@ class Agent {
     if (!toolToUse)
       throw new Error(`Tool '${toolCall.name}' not found or is disabled.`);
 
+    const createToolErrorResult = (error: unknown): string => {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (
+        toolCall.name === "replace_page_text" &&
+        message.includes("Missing required arguments")
+      ) {
+        return [
+          `Error executing replace_page_text: ${message}.`,
+          "Call ask_website on the active tab first to extract current page text and valid element IDs.",
+          'Then retry replace_page_text with arguments exactly shaped like {"replacements":[{"id":"ID_FROM_ASK_WEBSITE","text":"new visible text"}]} using only IDs returned by ask_website.',
+        ].join(" ");
+      }
+
+      return `Error executing ${toolCall.name}: ${message}`;
+    };
+
+    let result: string;
+    try {
+      result = await executeWebMCPTool(toolToUse, toolCall.arguments);
+    } catch (error) {
+      result = createToolErrorResult(error);
+    }
+
     return {
       id: toolCall.id,
       name: toolCall.name,
-      result: await executeWebMCPTool(toolToUse, toolCall.arguments),
+      result,
     };
   };
 

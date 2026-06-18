@@ -8,6 +8,7 @@ export enum BackgroundTasks {
   EXTRACT_FEATURES,
   CHECK_MODELS,
   INITIALIZE_MODELS,
+  LIST_CHAT_MODELS,
   AGENT_INITIALIZE,
   AGENT_GENERATE_TEXT,
   AGENT_GET_MESSAGES,
@@ -28,6 +29,19 @@ export enum ContentTasks {
 }
 
 export type Dtype = "fp32" | "fp16" | "q4" | "q4f16";
+
+export type InferenceProvider = "ollama" | "omlx" | "openai";
+
+export interface LocalInferenceSettings {
+  provider: InferenceProvider;
+  baseUrl: string;
+  modelId: string;
+  apiKey: string;
+}
+
+export interface LocalInferenceModel {
+  id: string;
+}
 
 export interface ChatMessageUser {
   role: "user";

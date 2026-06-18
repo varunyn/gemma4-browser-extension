@@ -147,17 +147,7 @@ class WebsiteContentManager {
       }
     );
 
-    const parts = response.parts as Array<WebsitePart>;
-
-    await Promise.all(
-      parts.map(async (part, i) => {
-        parts[i].embeddings = part.sentences.length
-          ? await this.featureExtractor.extractFeatures(part.sentences)
-          : [];
-      })
-    );
-
-    this.currentPageParts = parts;
+    this.currentPageParts = response.parts as Array<WebsitePart>;
   }
 
   private cosineSimilarity(vecA: number[], vecB: number[]): number {
@@ -192,7 +182,13 @@ class WebsiteContentManager {
     const scoredParts: Array<{ part: WebsitePart; score: number }> = [];
 
     for (const part of this.currentPageParts) {
-      if (!part.embeddings || part.embeddings.length === 0) {
+      if (!part.embeddings) {
+        part.embeddings = part.sentences.length
+          ? await this.featureExtractor.extractFeatures(part.sentences)
+          : [];
+      }
+
+      if (part.embeddings.length === 0) {
         continue;
       }
 
@@ -239,6 +235,24 @@ class WebsiteContentManager {
       .slice(0, maxParts);
   }
 
+  async countOverviewParts(): Promise<number> {
+    if (this.currentPageParts.length === 0) {
+      await this.loadCurrentPage();
+    }
+
+    const headings = this.currentPageParts.filter((part) =>
+      /^h[1-6]$/i.test(part.tagName)
+    );
+    const firstContentParts = this.currentPageParts.filter(
+      (part) => part.content.length > 0
+    );
+
+    return [...headings, ...firstContentParts].filter(
+      (part, index, all) =>
+        all.findIndex((candidate) => candidate.id === part.id) === index
+    ).length;
+  }
+
   getCurrentParts(): WebsitePart[] {
     return this.currentPageParts;
   }
@@ -258,20 +272,54 @@ const isBroadPageOverviewQuery = (query: string): boolean => {
   );
 };
 
-const formatWebsiteParts = (parts: WebsitePart[]): string => {
+const isPageTextMutationQuery = (query: string): boolean => {
+  const normalized = query.toLowerCase();
+  return (
+    /\b(this|current)\s+(site|page|website|tab)\b/.test(normalized) &&
+    /\b(edit|rewrite|replace|change|simplify|translate|localize|reword)\b/.test(
+      normalized
+    )
+  );
+};
+
+const MAX_WEBSITE_PART_CHARS = 900;
+
+const formatWebsitePartContent = (content: string): string => {
+  if (content.length <= MAX_WEBSITE_PART_CHARS) {
+    return content;
+  }
+
+  return `${content.slice(0, MAX_WEBSITE_PART_CHARS).trim()}...`;
+};
+
+const formatWebsiteParts = (
+  parts: WebsitePart[],
+  totalAvailable?: number
+): string => {
   let response =
     "Use only the following current-page excerpts. Do not infer sections or topics that are not shown here.\n\n";
 
+  if (typeof totalAvailable === "number") {
+    response += `Showing ${parts.length} of ${totalAvailable} editable current-page text elements. If changing page text, this is a bounded subset; do not claim the whole page was changed unless every relevant element was included and replaced.\n\n`;
+  }
+
   parts.forEach((part, index) => {
     response += `[${index + 1}] ID: ${part.id} | ${part.tagName.toUpperCase()} (Section ${part.sectionId}, Part ${part.paragraphId}):\n`;
-    response += `${part.content}\n\n`;
+    response += `${formatWebsitePartContent(part.content)}\n\n`;
   });
 
   response +=
-    "Note: You can highlight any of these content pieces by using the highlight_website_element tool with the corresponding ID.";
+    'If changing page text, call replace_page_text with {"replacements":[{"id":"ID_FROM_THIS_OUTPUT","text":"new visible text"}]}. Use only IDs listed above, prefer the most specific text IDs, and do not replace parent/container IDs when smaller text IDs cover the content.';
 
-  return response;
+  return response.trim();
 };
+
+const hasMissingExtractedElementFailure = (
+  results: PageTextReplacementResult[]
+): boolean =>
+  results.some((result) =>
+    result.error?.toLowerCase().includes("no extracted element found")
+  );
 
 export const createAskWebsiteTool = (
   featureExtractor: FeatureExtractor
@@ -293,8 +341,8 @@ export const createAskWebsiteTool = (
         topK: {
           type: "number",
           description:
-            "Number of relevant content pieces to return (default: 8; use 12-20 for page summaries)",
-          default: 8,
+            "Number of relevant content pieces to return (default: 4; use 6-8 for page summaries)",
+          default: 4,
         },
       },
       required: ["query"],
@@ -312,20 +360,32 @@ export const createAskWebsiteTool = (
       }
 
       try {
-        const results = isBroadPageOverviewQuery(query)
-          ? await websiteContentManager.overview(Math.max(topK, 20))
-          : await websiteContentManager.search(query, topK);
+        const isMutationQuery = isPageTextMutationQuery(query);
+        const isOverviewQuery = isBroadPageOverviewQuery(query);
+        const results =
+          isOverviewQuery || isMutationQuery
+            ? await websiteContentManager.overview(
+                isMutationQuery
+                  ? Math.min(Math.max(topK, 16), 24)
+                  : Math.min(Math.max(topK, 6), 8)
+              )
+            : await websiteContentManager.search(query, topK);
 
         if (results.length === 0) {
           return "No relevant content found on the current page.";
         }
 
-        const response = formatWebsiteParts(results);
+        const totalAvailable =
+          isOverviewQuery || isMutationQuery
+            ? await websiteContentManager.countOverviewParts()
+            : undefined;
+        const response = formatWebsiteParts(results, totalAvailable);
 
         console.debug("[gemma4-extension] ask_website result", {
           query,
           topK,
           resultCount: results.length,
+          totalAvailable,
           resultIds: results.map(({ id }) => id),
           response,
         });
@@ -401,7 +461,7 @@ const isValidReplacement = (value: unknown): value is PageTextReplacement => {
 export const replacePageTextTool: WebMCPTool = {
   name: "replace_page_text",
   description:
-    "Temporarily replace visible text on the active webpage by element ID. Use ask_website first to get IDs, then call this when the user asks to edit, rewrite, simplify, translate, or otherwise change text directly on the page. Changes disappear when the page refreshes.",
+    'Temporarily replace visible text on the active webpage by element ID. You must call ask_website first and use only exact IDs returned by ask_website. Never invent IDs. Arguments must be exactly {"replacements":[{"id":"ID_FROM_ASK_WEBSITE","text":"new visible text"}]}. Use this after ask_website when the user asks to edit, rewrite, simplify, translate, or otherwise change text directly on the page. Changes disappear when the page refreshes.',
   inputSchema: {
     type: "object",
     properties: {
@@ -463,13 +523,17 @@ export const replacePageTextTool: WebMCPTool = {
 
       const succeeded = response.results.filter(({ success }) => success);
       const failed = response.results.filter(({ success }) => !success);
+      const instruction = hasMissingExtractedElementFailure(response.results)
+        ? "The IDs were not found in the current extracted page registry. Call ask_website on the active tab to extract current text and valid IDs, then retry replace_page_text using only those IDs."
+        : undefined;
 
       return JSON.stringify(
         {
           changed: succeeded.length,
           failed: failed.length,
           results: response.results,
-          note: "Changes are temporary and will disappear on refresh.",
+          instruction,
+          note: `Changed only the ${succeeded.length} submitted element(s). Other page text may remain unchanged. Changes are temporary and will disappear on refresh.`,
         },
         null,
         2

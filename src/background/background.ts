@@ -5,6 +5,7 @@ import {
   ResponseStatus,
 } from "../shared/types.ts";
 import Agent from "./agent/Agent.ts";
+import { listLocalInferenceModels } from "./agent/localInferenceClient.ts";
 import {
   createAskWebsiteTool,
   highlightWebsiteElementTool,
@@ -38,6 +39,7 @@ const onModelDownloadProgress = (modelId: string, percentage: number) => {
 const featureExtractor = new FeatureExtractor();
 const vectorHistory = new VectorHistory(featureExtractor);
 let currentAgent: Agent | null = null;
+let agentInitializer: Promise<Agent> | null = null;
 
 const availableTools: Record<string, () => any> = {
   [AvailableTools.GET_OPEN_TABS]: () => getOpenTabsTool,
@@ -75,17 +77,37 @@ const createAgent = (toolNames?: string[]): Agent => {
   return agent;
 };
 
-const getAgent = (): Agent => {
+const getStoredActiveTools = (): Promise<string[] | undefined> =>
+  new Promise((resolve) => {
+    chrome.storage.local.get(["activeTools"], (result) => {
+      resolve(
+        Array.isArray(result.activeTools)
+          ? (result.activeTools as string[])
+          : undefined
+      );
+    });
+  });
+
+const getAgent = async (): Promise<Agent> => {
   if (!currentAgent) {
-    currentAgent = createAgent();
+    if (!agentInitializer) {
+      agentInitializer = getStoredActiveTools().then((tools) => {
+        currentAgent = createAgent(tools);
+        agentInitializer = null;
+        return currentAgent;
+      });
+    }
+
+    return agentInitializer;
   }
+
   return currentAgent;
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === BackgroundTasks.CHECK_MODELS) {
     getAgent()
-      .getTextGenerationPipeline()
+      .then((agent) => agent.getTextGenerationPipeline())
       .then(() => {
         sendResponse({ status: ResponseStatus.SUCCESS, results: [] });
       })
@@ -97,16 +119,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === BackgroundTasks.INITIALIZE_MODELS) {
-    const agent = getAgent();
     Promise.all([
       featureExtractor.getFeatureExtractionPipeline(onModelDownloadProgress),
-      agent.getTextGenerationPipeline(onModelDownloadProgress),
+      getAgent().then((agent) =>
+        agent.getTextGenerationPipeline(onModelDownloadProgress)
+      ),
     ])
       .then(() => {
         sendResponse({ status: ResponseStatus.SUCCESS });
       })
       .catch((error: Error) => {
         console.error("INITIALIZE_MODELS failed:", error);
+        sendResponse({ status: ResponseStatus.ERROR, error: error.message });
+      });
+
+    return true;
+  }
+
+  if (message.type === BackgroundTasks.LIST_CHAT_MODELS) {
+    listLocalInferenceModels(message.settings)
+      .then((models) => {
+        sendResponse({ status: ResponseStatus.SUCCESS, models });
+      })
+      .catch((error: Error) => {
+        console.error("LIST_CHAT_MODELS failed:", error);
         sendResponse({ status: ResponseStatus.ERROR, error: error.message });
       });
 
@@ -125,9 +161,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === BackgroundTasks.AGENT_GENERATE_TEXT) {
-    const agent = getAgent();
-    agent
-      .runAgent(message.prompt)
+    getAgent()
+      .then((agent) => agent.runAgent(message.prompt))
       .then((metrics) => {
         sendResponse({ status: ResponseStatus.SUCCESS, metrics });
       })
@@ -140,18 +175,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === BackgroundTasks.AGENT_GET_MESSAGES) {
-    const agent = getAgent();
-    sendResponse({
-      status: ResponseStatus.SUCCESS,
-      messages: agent.chatMessages,
+    getAgent().then((agent) => {
+      sendResponse({
+        status: ResponseStatus.SUCCESS,
+        messages: agent.chatMessages,
+      });
     });
     return true;
   }
 
   if (message.type === BackgroundTasks.AGENT_CLEAR) {
-    const agent = getAgent();
-    agent.clear();
-    sendResponse({ status: ResponseStatus.SUCCESS });
+    getAgent().then((agent) => {
+      agent.clear();
+      sendResponse({ status: ResponseStatus.SUCCESS });
+    });
     return true;
   }
 

@@ -1,6 +1,6 @@
 {
-  "name": "gemma4-omlx-browser-assistant",
-  "description": "Local AI agent Chrome extension powered by OMLX and Gemma 4",
+  "name": "local-ai-browser-assistant",
+  "description": "Local AI agent Chrome extension powered by Ollama or OMLX",
   "private": true,
   "version": "0.2.1",
   "type": "module",

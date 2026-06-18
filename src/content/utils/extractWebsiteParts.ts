@@ -43,6 +43,10 @@ const semanticTextSelector = [
   "pre",
 ].join(",");
 
+const structuralContainerSelector = ["div", "section", "article", "main", "body"].join(
+  ","
+);
+
 const broadTextSelector = [
   semanticTextSelector,
   "a",
@@ -97,14 +101,18 @@ const getDirectText = (element: Element): string =>
       .join(" ")
   );
 
-const hasExtractableChild = (element: Element): boolean =>
+const hasExtractableDescendant = (element: Element): boolean =>
   Array.from(element.children).some((child) => {
     if (!shouldExtractElement(child)) {
       return false;
     }
 
     const directText = getDirectText(child);
-    return directText.length > 0 || child.matches(semanticTextSelector);
+    return (
+      directText.length > 0 ||
+      child.matches(semanticTextSelector) ||
+      hasExtractableDescendant(child)
+    );
   });
 
 const isUsefulTextElement = (element: Element): boolean => {
@@ -112,12 +120,17 @@ const isUsefulTextElement = (element: Element): boolean => {
     return true;
   }
 
+  const hasTextDescendant = hasExtractableDescendant(element);
+  if (element.matches(structuralContainerSelector) && hasTextDescendant) {
+    return false;
+  }
+
   const directText = getDirectText(element);
   if (directText.length >= 2) {
     return true;
   }
 
-  return !hasExtractableChild(element);
+  return !hasTextDescendant;
 };
 
 const getCandidateElements = (rootElement: HTMLElement): Array<Element> => {

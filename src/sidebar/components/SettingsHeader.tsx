@@ -1,4 +1,5 @@
 import cn from "../utils/classnames.ts";
+import InferenceSettings from "./InferenceSettings.tsx";
 
 interface SettingsHeaderProps {
   className?: string;
@@ -14,23 +15,16 @@ export default function SettingsHeader({
         "border-b border-chrome-border bg-chrome-bg-primary px-6 py-4"
       )}
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-3xl font-normal text-chrome-text-primary leading-tight">
-            Gemma 4 Browser Assistant
+            Local Browser Assistant
           </h1>
           <p className="text-sm text-chrome-text-secondary mt-1">
-            Powered by{" "}
-            <a
-              href="https://omlx.ai/"
-              target="_blank"
-              className="text-chrome-accent-primary hover:text-chrome-accent-hover no-underline"
-              rel="noreferrer"
-            >
-              OMLX
-            </a>
+            Ollama or OMLX
           </p>
         </div>
+        <InferenceSettings />
       </div>
     </header>
   );
